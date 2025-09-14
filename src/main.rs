@@ -1,13 +1,18 @@
 use std::{
     fs::File,
     io::{Cursor, Read, Seek, SeekFrom},
+    sync::LazyLock,
 };
 
 use abootimg_oxide::BufReader;
 use binrw::BinRead;
 use clap::Parser;
-use color_eyre::{eyre::{Context, OptionExt}, Result};
+use color_eyre::{
+    eyre::{Context, OptionExt},
+    Result,
+};
 use flate2::read::GzDecoder;
+use regex::bytes::Regex;
 
 use crate::kernel::{arm64_image_header::Arm64ImageHeader, kernel_banner::find_kernel_banner};
 
@@ -23,7 +28,8 @@ struct Cli {
 
 fn get_magisk_bin(mut ramdisk_reader: impl Read + Seek) -> Result<Option<Vec<u8>>> {
     loop {
-        let cpio_reader = cpio::NewcReader::new(&mut ramdisk_reader).wrap_err("Failed to read CPIO archive")?;
+        let cpio_reader =
+            cpio::NewcReader::new(&mut ramdisk_reader).wrap_err("Failed to read CPIO archive")?;
         if cpio_reader.entry().is_trailer() {
             return Ok(None);
         }
@@ -31,7 +37,8 @@ fn get_magisk_bin(mut ramdisk_reader: impl Read + Seek) -> Result<Option<Vec<u8>
             || cpio_reader.entry().name() == "overlay.d/sbin/magisk32.xz"
         {
             let mut buf = Vec::new();
-            lzma_rs::xz_decompress(&mut BufReader::new(cpio_reader), &mut buf).wrap_err("Failed to decompress XZ")?;
+            lzma_rs::xz_decompress(&mut BufReader::new(cpio_reader), &mut buf)
+                .wrap_err("Failed to decompress XZ")?;
             return Ok(Some(buf));
         } else {
             cpio_reader.skip()?;
@@ -43,7 +50,8 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let mut r = BufReader::new(File::open(cli.boot_img).wrap_err("Failed to open boot image")?);
-    let hdr = abootimg_oxide::Header::parse(&mut r).wrap_err("Failed to parse boot image header")?;
+    let hdr =
+        abootimg_oxide::Header::parse(&mut r).wrap_err("Failed to parse boot image header")?;
 
     {
         println!("\n### Boot image header info:");
@@ -51,7 +59,8 @@ fn main() -> Result<()> {
         println!("OS version: {}", os_ver_patch.version());
         println!("OS patch level: {}", os_ver_patch.patch());
 
-        let cmdline = std::str::from_utf8(hdr.cmdline()).wrap_err("Cmdline should be valid UTF-8")?;
+        let cmdline =
+            std::str::from_utf8(hdr.cmdline()).wrap_err("Cmdline should be valid UTF-8")?;
         println!("Cmdline: {cmdline}");
         println!();
     }
@@ -65,7 +74,8 @@ fn main() -> Result<()> {
             buf
         };
 
-        let header = Arm64ImageHeader::read(&mut Cursor::new(&kernel)).wrap_err("Failed to parse ARM64 Linux kernel image header")?;
+        let header = Arm64ImageHeader::read(&mut Cursor::new(&kernel))
+            .wrap_err("Failed to parse ARM64 Linux kernel image header")?;
         println!("\n### Kernel image info:");
         println!("Text offset: {}", header.text_offset);
         println!("Self-reported effective Image size: {}", header.image_size);
@@ -85,16 +95,15 @@ fn main() -> Result<()> {
         buf
     };
 
-    if let Some(magisk32) = get_magisk_bin(&mut Cursor::new(ramdisk))? {
-        let needle_idx = memchr::memmem::find_iter(&magisk32, b"Magisk ")
-            .find(|i| magisk32[i + b"Magisk ".len()].is_ascii_digit())
-            .ok_or_eyre("Couldn't find version pattern in magisk32")?;
+    if let Some(magisk) = get_magisk_bin(&mut Cursor::new(ramdisk))? {
+        static MAGISK_VERSION_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"[0-9]+\.[0-9]+\([0-9]{5}\)").unwrap());
 
-        let version = &magisk32[needle_idx + "Magisk ".len()..];
-        let version = &version[..version
-            .iter()
-            .position(|&b| !matches!(b, b'0'..=b'9' | b'.' | b'(' | b')'))
-            .unwrap_or(version.len())];
+        let version = MAGISK_VERSION_RE
+            .find(&magisk)
+            .ok_or_eyre("Couldn't find version pattern in magisk binary")?
+            .as_bytes();
+
         let version = std::str::from_utf8(version)?;
 
         println!("Magisk version: {version}");
