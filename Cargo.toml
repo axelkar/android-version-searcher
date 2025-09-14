@@ -12,9 +12,13 @@ keywords = ["android"]
 
 [dependencies]
 abootimg-oxide = "0.2.2"
+bilge = "0.2.0"
+binrw = "0.15.0"
 clap = { version = "4.5.23", features = ["derive"] }
+color-eyre = { version = "0.6.5", default-features = false }
 cpio = "0.4.1"
 erofs-sys = { git = "https://github.com/ToolmanP/erofs-rs", rev = "fb5301b3cc46b909de32f86ea246eb9ecff741cf" }
 flate2 = "1.0.35"
 lzma-rs = "0.3.0"
 memchr = "2.7.4"
+regex = "1.11.2"

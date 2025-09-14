@@ -3,11 +3,11 @@
 **Work in progress**, or at least unfinished.
 
 Statically finds the following properties of Android partitions:
-- boot: SDK level, security patch and Magisk
+- boot: OS version (inaccurate), security patch level, kernel info and [Magisk](https://github.com/topjohnwu/Magisk)
 - system: nothing yet! awaiting userspace EROFS implementation
 
-Useful for seeing when over-the-air (OTA) updates have actually been written to
-disk on the Android operating system on your phone.
+Useful for seeing when over-the-air (OTA) updates have actually been written
+to disk on the Android operating system on your phone.
 
 For example, I believe that the "Install" button on OnePlus devices actually
 means "Reboot". This isn't documented in Magisk so the first time I tried to

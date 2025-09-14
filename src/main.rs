@@ -4,8 +4,14 @@ use std::{
 };
 
 use abootimg_oxide::BufReader;
+use binrw::BinRead;
 use clap::Parser;
+use color_eyre::{eyre::{Context, OptionExt}, Result};
 use flate2::read::GzDecoder;
+
+use crate::kernel::{arm64_image_header::Arm64ImageHeader, kernel_banner::find_kernel_banner};
+
+pub mod kernel;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -15,59 +21,81 @@ struct Cli {
     boot_img: String,
 }
 
-fn get_magisk_bin(
-    mut ramdisk_reader: impl Read + Seek,
-) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+fn get_magisk_bin(mut ramdisk_reader: impl Read + Seek) -> Result<Option<Vec<u8>>> {
     loop {
-        let cpio_reader = cpio::NewcReader::new(&mut ramdisk_reader).unwrap();
+        let cpio_reader = cpio::NewcReader::new(&mut ramdisk_reader).wrap_err("Failed to read CPIO archive")?;
         if cpio_reader.entry().is_trailer() {
             return Ok(None);
         }
         if cpio_reader.entry().name() == "overlay.d/sbin/magisk.xz"
-          || cpio_reader.entry().name() == "overlay.d/sbin/magisk32.xz" {
+            || cpio_reader.entry().name() == "overlay.d/sbin/magisk32.xz"
+        {
             let mut buf = Vec::new();
-            lzma_rs::xz_decompress(&mut BufReader::new(cpio_reader), &mut buf).unwrap();
+            lzma_rs::xz_decompress(&mut BufReader::new(cpio_reader), &mut buf).wrap_err("Failed to decompress XZ")?;
             return Ok(Some(buf));
         } else {
-            cpio_reader.skip().unwrap();
+            cpio_reader.skip()?;
         }
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let mut r = BufReader::new(File::open(cli.boot_img).unwrap());
-    let hdr = abootimg_oxide::Header::parse(&mut r).unwrap();
+    let mut r = BufReader::new(File::open(cli.boot_img).wrap_err("Failed to open boot image")?);
+    let hdr = abootimg_oxide::Header::parse(&mut r).wrap_err("Failed to parse boot image header")?;
 
-    let os_ver_patch = hdr.osversionpatch();
-    println!("OS version: {}", os_ver_patch.version());
-    println!("OS patch level: {}", os_ver_patch.patch());
+    {
+        println!("\n### Boot image header info:");
+        let os_ver_patch = hdr.osversionpatch();
+        println!("OS version: {}", os_ver_patch.version());
+        println!("OS patch level: {}", os_ver_patch.patch());
 
-    let cmdline = std::str::from_utf8(hdr.cmdline()).expect("Cmdline should be valid UTF-8");
-    println!("Cmdline: {}", cmdline);
+        let cmdline = std::str::from_utf8(hdr.cmdline()).wrap_err("Cmdline should be valid UTF-8")?;
+        println!("Cmdline: {cmdline}");
+        println!();
+    }
+
+    {
+        r.seek(SeekFrom::Start(hdr.kernel_position() as u64))?;
+
+        let kernel = {
+            let mut buf = vec![0; hdr.kernel_size() as usize];
+            r.read_exact(&mut buf)?;
+            buf
+        };
+
+        let header = Arm64ImageHeader::read(&mut Cursor::new(&kernel)).wrap_err("Failed to parse ARM64 Linux kernel image header")?;
+        println!("\n### Kernel image info:");
+        println!("Text offset: {}", header.text_offset);
+        println!("Self-reported effective Image size: {}", header.image_size);
+        println!("boot.img kernel size: {}", hdr.kernel_size());
+        println!("Flags: {:#?}", header.flags);
+        let banner = find_kernel_banner(&kernel).ok_or_eyre("Couldn't find kernel banner")?;
+        println!("Banner: {}", std::str::from_utf8(banner.banner)?.trim_end());
+        println!();
+    }
 
     let ramdisk = {
-        r.seek(SeekFrom::Start(hdr.ramdisk_position() as u64))
-            .unwrap();
+        r.seek(SeekFrom::Start(hdr.ramdisk_position() as u64))?;
         let mut buf = Vec::new();
         GzDecoder::new(r.take(hdr.ramdisk_size() as u64))
             .read_to_end(&mut buf)
-            .unwrap();
+            .wrap_err("Failed to decompress GZIP")?;
         buf
     };
 
     if let Some(magisk32) = get_magisk_bin(&mut Cursor::new(ramdisk))? {
         let needle_idx = memchr::memmem::find_iter(&magisk32, b"Magisk ")
             .find(|i| magisk32[i + b"Magisk ".len()].is_ascii_digit())
-            .expect("Should find version pattern in magisk32");
+            .ok_or_eyre("Couldn't find version pattern in magisk32")?;
 
         let version = &magisk32[needle_idx + "Magisk ".len()..];
         let version = &version[..version
             .iter()
             .position(|&b| !matches!(b, b'0'..=b'9' | b'.' | b'(' | b')'))
             .unwrap_or(version.len())];
-        let version = std::str::from_utf8(version).unwrap();
+        let version = std::str::from_utf8(version)?;
 
         println!("Magisk version: {version}");
     } else {
@@ -75,8 +103,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // TODO: Android dynamic partitions impl fully in userspace to read the other slot
-    // TODO: also look at `/system/build.prop` for ro.build.version.release and ro.build.version.security_patch
-    /*let path = std::env::args().nth(1).expect("Please provide a path to a system.img.\nMost likely it's /dev/block/mapper/system{_a,_b}");
+    // ^ my old android_metadata_rs project
+    // TODO: also look at `/system/build.prop` for ro.build.version.{release,security_patch,sdk}
+
+    // sys-mount crate
+    /*let path = std::env::args().nth(1).expect("Please provide a path to a system.img.\nMost likely it's either of /dev/block/mapper/system{_a,_b}");
     let file = File::open(path).unwrap();
     let fs = Ext4::load(Box::new(file));*/
 
