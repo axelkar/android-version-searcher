@@ -12,6 +12,7 @@ use color_eyre::{
     Result,
 };
 use flate2::read::GzDecoder;
+use owo_colors::{colors::xterm::Gray, OwoColorize};
 use regex::bytes::Regex;
 
 use crate::kernel::{arm64_image_header::Arm64ImageHeader, kernel_banner::find_kernel_banner};
@@ -48,24 +49,28 @@ fn get_magisk_bin(mut ramdisk_reader: impl Read + Seek) -> Result<Option<Vec<u8>
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    color_eyre::install()?;
 
     let mut r = BufReader::new(File::open(cli.boot_img).wrap_err("Failed to open boot image")?);
     let hdr =
         abootimg_oxide::Header::parse(&mut r).wrap_err("Failed to parse boot image header")?;
 
     {
-        println!("\n### Boot image header info:");
+        println!("{} {}", "###".fg::<Gray>(), "Boot image header info:".cyan());
         let os_ver_patch = hdr.osversionpatch();
-        println!("OS version: {}", os_ver_patch.version());
-        println!("OS patch level: {}", os_ver_patch.patch());
+        println!("{} {}", "OS version:".blue(), os_ver_patch.version());
+        println!("{} {}", "OS patch level:".blue(), os_ver_patch.patch());
 
         let cmdline =
             std::str::from_utf8(hdr.cmdline()).wrap_err("Cmdline should be valid UTF-8")?;
-        println!("Cmdline: {cmdline}");
+        println!("{} {cmdline}", "Cmdline:".blue());
+        println!("{} {}", "Kernel size:".blue(), hdr.kernel_size());
         println!();
     }
 
     {
+        println!("{} {}", "###".fg::<Gray>(), "Kernel image info:".cyan());
+
         r.seek(SeekFrom::Start(hdr.kernel_position() as u64))?;
 
         let kernel = {
@@ -76,13 +81,14 @@ fn main() -> Result<()> {
 
         let header = Arm64ImageHeader::read(&mut Cursor::new(&kernel))
             .wrap_err("Failed to parse ARM64 Linux kernel image header")?;
-        println!("\n### Kernel image info:");
-        println!("Text offset: {}", header.text_offset);
-        println!("Self-reported effective Image size: {}", header.image_size);
-        println!("boot.img kernel size: {}", hdr.kernel_size());
-        println!("Flags: {:#?}", header.flags);
+
+        println!("{} {}", "Text offset:".blue(), header.text_offset);
+        println!("{} {}", "Effective Image size:".blue(), header.image_size);
+        println!("{} {:#?}", "Flags:".blue(), header.flags);
+
         let banner = find_kernel_banner(&kernel).ok_or_eyre("Couldn't find kernel banner")?;
-        println!("Banner: {}", std::str::from_utf8(banner.banner)?.trim_end());
+        let banner = std::str::from_utf8(banner.banner)?.trim_end();
+        println!("{} {}", "Banner:".blue(), banner);
         println!();
     }
 
@@ -106,9 +112,9 @@ fn main() -> Result<()> {
 
         let version = std::str::from_utf8(version)?;
 
-        println!("Magisk version: {version}");
+        println!("{} {version}", "Magisk version:".blue());
     } else {
-        println!("Magisk not found");
+        println!("{}", "Magisk not found".yellow());
     }
 
     // TODO: Android dynamic partitions impl fully in userspace to read the other slot

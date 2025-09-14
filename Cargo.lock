@@ -49,6 +49,7 @@ dependencies = [
  "flate2",
  "lzma-rs",
  "memchr",
+ "owo-colors 4.2.2",
  "regex",
 ]
 
