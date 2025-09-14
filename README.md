@@ -4,6 +4,7 @@
 
 Statically finds the following properties of Android partitions:
 - boot: OS version (inaccurate), security patch level, kernel info and [Magisk](https://github.com/topjohnwu/Magisk)
+  * TODO: Reading in-kernel `.config`, which at runtime is in `/proc/config.gz` (Requires `CONFIG_IKCONFIG` in the kernel)
 - system: nothing yet! awaiting userspace EROFS implementation
 
 Useful for seeing when over-the-air (OTA) updates have actually been written
